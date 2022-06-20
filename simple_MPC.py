@@ -4,7 +4,7 @@ import numpy as np
 
 #Define enviorment
 T = 0.2 #[s]
-N = 10  #prediction horizon
+N = 1  #prediction horizon
 rob_diam = 0.3 #[m]
 n_robots = 3 #number of robots
 obss = np.array([[5,5]]) #Position of obstacles
@@ -46,10 +46,6 @@ for p in range(0,n_robots): #define states, inputs and dynamics for each robot
 
     rhs.extend([v[p]*cos(theta[p]),v[p]*sin(theta[p]),omega[p]])  #system r.h.s (right hand side of system dynamics)
 
-print(states)
-print(inputs)
-print(rhs)
-
 n_states = len(states)
 n_inputs = len(inputs) #Get number of states and inputs
 
@@ -65,4 +61,25 @@ g = [];  #Constraints vector
 Q = np.zeros((n_states,n_states)) #weighting matrices (states)
 R = np.zeros((n_inputs,n_inputs)) #weighting matrices (inputs)
 
+for nj in range(0,n_robots): #%Populate Q and R matrices for all robots (for 3 states and 2 inputs per robot)
+    Q[3*(nj),3*(nj)] = 1
+    Q[1+3*(nj),1+3*(nj)] = 5
+    Q[2+3*(nj),2+3*(nj)] = 0.1 
+    R[2*(nj),2*(nj)] = 0.5
+    R[1+2*(nj),1+2*(nj)] = 0.05 
 
+print(Q)
+print(R)
+
+st  = X[:,0] #initial state
+g.append(st-P[0:n_robots*3]) #initial condition constraints for initial state (3 is the amount of states per robot)
+
+for k in range(0,N):
+    st = X[:,k]
+    inp = U[:,k]; #st=state; inp=input
+    st_error = (st-P[n_robots*3:n_robots*3+n_robots*3])
+    obj = obj+st_error.T@Q@st_error + inp.T@R@inp #calculate obj
+    st_next = X[:,k+1]
+    f_value = f[st,inp]
+    st_next_euler = st+ (T*f_value)
+    g.append(st_next-st_next_euler) #compute constraints for equality state constraints
