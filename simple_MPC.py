@@ -1,4 +1,9 @@
-from casadi import *
+from time import time
+import casadi as ca
+import numpy as np
+from casadi import sin, cos, pi
+import matplotlib.pyplot as plt
+from simulation_code import simulate
 import numpy as np
 
 
@@ -33,10 +38,10 @@ rhs = []
 
 def shift_timestep(sampling_time, t0,x0,u,f):
     f_value = f(x0, u[:,0])
-    next_state = DM.full(x0 + (sampling_time * f_value))
+    next_state = ca.DM.full(x0 + (sampling_time * f_value))
 
     t0 = t0 + sampling_time
-    u0 = horzcat(
+    u0 = ca.horzcat(
             u[:, 1:],
             reshape(u[:, -1], -1, 1)
     )
@@ -77,7 +82,7 @@ P = SX.sym('P',n_states + n_states) #parameters (which include at the initial st
 
 X = SX.sym('X',n_states,(N+1)) #A vector that represents the states over the optimization problem.
 
-obj = 0 #Objective function
+cost_fn = 0 #cost function
 g = []  #Constraints vector ~~check
 
 Q = np.zeros((n_states,n_states)) #weighting matrices (states)
@@ -104,7 +109,36 @@ for k in range(0,N):
     st_next_euler = st+ (T*f_value)
     g.append(st_next-st_next_euler) #compute constraints for equality state constraints
 
+# runge kutta
+for k in range(N):
+    st = X[:, k]
+    inp = U[:, k] #st = state; inp = input
+    cost_fn = cost_fn \
+        + (st - P[n_states:]).T @ Q @ (st - P[n_states:]) \
+        + con.T @ R @ con
+    st_next = X[:, k+1]
+    k1 = f(st, con)
+    k2 = f(st + step_horizon/2*k1, con)
+    k3 = f(st + step_horizon/2*k2, con)
+    k4 = f(st + step_horizon * k3, con)
+    st_next_RK4 = st + (step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+    g = vertcat(g, st_next - st_next_RK4)
 
+OPT_variables = vertcat(
+    X.reshape((-1, 1)),   # Example: 3x11 ---> 33x1 where 3=states, 11=N+1
+    U.reshape((-1, 1))
+)
+nlp_prob = {
+    'f': cost_fn,
+    'x': OPT_variables,
+    'g': g,
+    'p': P
+}
+
+opts = {
+    'ipopt': {
+        'max_iter': 2000,
+        'print_level': 0,
 
 
 
