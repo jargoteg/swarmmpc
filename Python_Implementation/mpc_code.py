@@ -15,7 +15,7 @@ R3 = 1
 R4 = 1
 
 step_horizon = 0.1  # time between steps in seconds
-N = 10              # number of look ahead steps
+N = 1              # number of look ahead steps
 rob_diam = 0.3      # diameter of the robot
 wheel_radius = 1    # wheel radius
 Lx = 0.3            # L in J Matrix (half robot x-axis length)
@@ -61,7 +61,7 @@ states = ca.vertcat(
     theta
 )
 n_states = states.numel()
-print(states)
+
 # control symbolic variables
 V_a = ca.SX.sym('V_a')
 V_b = ca.SX.sym('V_b')
@@ -105,6 +105,7 @@ J = (wheel_radius/4) * ca.DM([
 ])
 # RHS = states + J @ controls * step_horizon  # Euler discretization
 RHS = rot_3d_z @ J @ controls
+print(RHS)
 # maps controls from [va, vb, vc, vd].T to [vx, vy, omega].T
 f = ca.Function('f', [states, controls], [RHS])
 
