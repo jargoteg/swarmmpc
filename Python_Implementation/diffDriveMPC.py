@@ -8,38 +8,36 @@ from simulation_code import simulate
 # setting matrix_weights' variables
 Q_x = 100
 Q_y = 100
-Q_theta = 0.1
-R1 = 0 #input costs
-R2 = 0
+Q_theta = 2
+R1 = 1
+R2 = 0.01
+R3 = 1
+R4 = 1
 
-#robot specs taken from https://www.gctronic.com/doc/index.php/e-puck2#Hardware
 step_horizon = 0.1  # time between steps in seconds
-N = 10           # number of look ahead steps
-rob_diam = 0.3     # diameter of the robot, 70mm
+N = 10              # number of look ahead steps
+rob_diam = 0.3      # diameter of the robot
 sim_time = 200      # simulation time
 
+# specs
+x_init = 1
+y_init = 0
+theta_init = 0
+x_target = 7
+y_target = 10
+theta_target = pi
 
-#epuck1 = 12.9 cm/s; epuck2 = 15.4 cm/s [
-v_max = 1 
+v_max = 0.6
 v_min = -v_max
 omega_max = pi/4 
 omega_min = -omega_max
 
-
 #Define state constraints
-x_max = 20
-x_min = -20   #Size of the arena
-y_max = 20
-y_min = -20
+x_max = 10      #Size of the arena
+x_min = -10   
+y_max = 10
+y_min = -10
 
-# specs
-x_init = 0
-y_init = 0
-theta_init = 0
-
-x_target = 10
-y_target = 10.5
-theta_target = 0
 
 def shift_timestep(step_horizon, t0, state_init, u, f):
     f_value = f(state_init, u[:, 0])
@@ -57,6 +55,8 @@ def shift_timestep(step_horizon, t0, state_init, u, f):
 def DM2Arr(dm):
     return np.array(dm.full())
 
+    
+
 
 # state symbolic variables
 x = ca.SX.sym('x')
@@ -72,9 +72,10 @@ n_states = states.numel()
 # control symbolic variables
 v = ca.SX.sym('v')
 omega = ca.SX.sym('omega')
+
 controls = ca.vertcat(
     v,
-    omega
+    omega,
 )
 n_controls = controls.numel()
 
@@ -91,6 +92,7 @@ P = ca.SX.sym('P', n_states + n_states)
 Q = ca.diagcat(Q_x, Q_y, Q_theta)
 
 # controls weights matrix
+# controls weights matrix
 R = ca.diagcat(R1, R2)
 
 RHS = ca.vertcat(
@@ -98,12 +100,14 @@ RHS = ca.vertcat(
     v*sin(theta),
     omega
 )
+print(RHS)
 # maps controls from [va, vb, vc, vd].T to [vx, vy, omega].T
 f = ca.Function('f', [states, controls], [RHS])
 
 
 cost_fn = 0  # cost function
 g = X[:, 0] - P[:n_states]  # constraints in the equation
+
 
 # runge kutta
 for k in range(N):
@@ -120,12 +124,12 @@ for k in range(N):
     st_next_RK4 = st + (step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
     g = ca.vertcat(g, st_next - st_next_RK4)
 
-# m = [-omega_max/v_max, omega_max/-v_min, -omega_min/v_max, omega_min/-v_min];
+m = [-omega_max/v_max, omega_max/-v_min, -omega_min/v_max, omega_min/-v_min]
 
-# for p in range(0,4): #Diff drive constraint in the input
-#     for k in range(0,N):
-#         con = U[:,k]; #con=control
-#         g = ca.vertcat(g, con[1]-m[p]*con[0])
+for p in range(0,4): #Diff drive constraint in the input
+    for k in range(0,N):
+        con = U[:,k]; #con=control
+        g = ca.vertcat(g, con[1]-m[p]*con[0])
 
 OPT_variables = ca.vertcat(
     X.reshape((-1, 1)),   # Example: 3x11 ---> 33x1 where 3=states, 11=N+1
@@ -161,25 +165,21 @@ ubx[0: n_states*(N+1): n_states] = x_max      # X upper bound
 ubx[1: n_states*(N+1): n_states] = y_max      # Y upper bound
 ubx[2: n_states*(N+1): n_states] = ca.inf      # theta upper bound
 
-lbx[n_states*(N+1) :: n_controls] = v_min       # v lower bound for v
-lbx[n_states*(N+1)+1 :: n_controls] = omega_min   # v lower bound for omega
+lbx[n_states*(N+1)::n_controls] = v_min       # v lower bound for all V
+lbx[n_states*(N+1)+1::n_controls] = omega_min       # v lower bound for all V
 
-ubx[n_states*(N+1) :: n_controls] = v_max       # v upper bound for v
-ubx[n_states*(N+1)+1 :: n_controls] = omega_max   # v upper bound for omega
+ubx[n_states*(N+1)::n_controls] = v_max       # v lower bound for all V
+ubx[n_states*(N+1)+1::n_controls] = omega_max       # v lower bound for all V
 
-#print(lbx)
-#print(ubx)
 
-lbg = ca.DM.zeros((n_states*(N+1)+ 4*(N), 1))  # constraints lower bound
-ubg = ca.DM.zeros((n_states*(N+1)+ 4*(N), 1))  # constraints upper bound
-#print(lbg)
-lbg[n_states*(N+1)+1:n_states*(N+1)+2*N] = -ca.inf
+lbg = ca.DM.zeros((n_states*(N+1) + 4*(N), 1))  # constraints lower bound
+ubg = ca.DM.zeros((n_states*(N+1) + 4*(N), 1))  # constraints upper bound
+
+lbg[n_states*(N+1):n_states*(N+1)+2*N] = -ca.inf
 lbg[n_states*(N+1)+2*N:] = omega_min
 
-ubg[n_states*(N+1)+1:n_states*(N+1)+2*N] = omega_max
+ubg[n_states*(N+1):n_states*(N+1)+2*N] = omega_max
 ubg[n_states*(N+1)+2*N:] = ca.inf
-
-#print(lbg)
 
 args = {
     'lbg': lbg,  # constraints lower bound
@@ -269,13 +269,11 @@ if __name__ == '__main__':
     main_loop_time = time()
     ss_error = ca.norm_2(state_init - state_target)
 
-    #print('\n\n')
-    #print('Total time: ', main_loop_time - main_loop)
-    #print('avg iteration time: ', np.array(times).mean() * 1000, 'ms')
-    #print('final error: ', ss_error)
-    print(cat_states)
-    print("-----")
-    print(cat_controls)
+    print('\n\n')
+    print('Total time: ', main_loop_time - main_loop)
+    print('avg iteration time: ', np.array(times).mean() * 1000, 'ms')
+    print('final error: ', ss_error)
+
     # simulate
     simulate(cat_states, cat_controls, times, step_horizon, N,
              np.array([x_init, y_init, theta_init, x_target, y_target, theta_target]), save=False)

@@ -15,7 +15,7 @@ R3 = 1
 R4 = 1
 
 step_horizon = 0.1  # time between steps in seconds
-N = 1              # number of look ahead steps
+N = 10              # number of look ahead steps
 rob_diam = 0.3      # diameter of the robot
 wheel_radius = 1    # wheel radius
 Lx = 0.3            # L in J Matrix (half robot x-axis length)
