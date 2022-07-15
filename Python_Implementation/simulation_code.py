@@ -3,7 +3,7 @@ from numpy import sin, cos, pi
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from time import time
-
+ 
 
 def simulate(cat_states, cat_controls, t, step_horizon, N, reference, save=False):
     def create_triangle(state=[0,0,0], h=1, w=0.5, update=False):

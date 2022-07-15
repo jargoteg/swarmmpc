@@ -12,9 +12,12 @@ from enum import Enum
 import time
 import random
 import inspect
-
+import casadi as ca
+from casadi import sin, cos, pi
 import colorama
 from colorama import Fore
+
+import arenaMPC
 
 colorama.init(autoreset=True)
 
@@ -108,6 +111,81 @@ class Robot:
         self.battery_percentage = 0
 
         self.turn_time = time.time()
+
+
+        ##########################################
+        #MPC init
+        # setting matrix_weights' variables
+        self.Q_x = 100
+        self.Q_y = 100
+        self.Q_theta = 2
+        self.R1 = 1
+        self.R2 = 0.01
+
+        self.step_horizon = 0.1  # time between steps in seconds
+        self.N = 10              # number of look ahead steps
+
+        #Robot specific parameters
+        self.v_max = 100
+        self.v_min = -self.v_max
+        self.omega_max = pi/4 
+        self.omega_min = -self.omega_max
+
+        #Size of the arena
+        self.x_max = 100      
+        self.x_min = -100   
+        self.y_max = 100
+        self.y_min = -100
+
+        
+        # state symbolic variables
+        self.x = ca.SX.sym('x')
+        self.y = ca.SX.sym('y')
+        self.theta = ca.SX.sym('theta')
+        self.states = ca.vertcat(
+            self.x,
+            self.y,
+            self.theta
+        )
+        self.n_states = self.states.numel()
+
+        # control symbolic variables
+        self.v = ca.SX.sym('v')
+        self.omega = ca.SX.sym('omega')
+
+        self.controls = ca.vertcat(
+            self.v,
+            self.omega,
+        )
+        self.n_controls = self.controls.numel()
+
+        # matrix containing all states over all time steps +1 (each column is a state vector)
+        self.X = ca.SX.sym('X', self.n_states, self.N + 1)
+
+        # matrix containing all control actions over all time steps (each column is an action vector)
+        self.U = ca.SX.sym('U', self.n_controls, self.N)
+
+        # coloumn vector for storing initial state and target state
+        self.P = ca.SX.sym('P', self.n_states + self.n_states)
+
+        # state weights matrix (Q_X, Q_Y, Q_THETA)
+        self.Q = ca.diagcat(self.Q_x, self.Q_y, self.Q_theta)
+
+        # controls weights matrix
+        # controls weights matrix
+        self.R = ca.diagcat(self.R1, self.R2)
+
+        self.RHS = ca.vertcat(
+            self.v*cos(self.theta),
+            self.v*sin(self.theta),
+            self.omega
+        )
+        # maps controls from [va, vb, vc, vd].T to [vx, vy, omega].T
+        self.f = ca.Function('f', [self.states, self.controls], [self.RHS])
+
+
+        self.cost_fn = 0  # cost function
+        self.g = self.X[:, 0] - self.P[:self.n_states]  # constraints in the equation
 
         # Pi-puck IR is more sensitive than Mona, so use higher threshold for obstacle detection
         if robot_id < 31:
@@ -332,6 +410,7 @@ async def send_commands(robot):
                 robot.turn_time = time.time()
                 robot.state = RobotState.FORWARDS
 
+        MPC(robot.state)
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
         message["set_motor_speeds"]["right"] = right
