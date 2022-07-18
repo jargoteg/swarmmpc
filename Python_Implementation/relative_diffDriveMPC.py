@@ -1,7 +1,7 @@
 from time import time
 import casadi as ca
 import numpy as np
-from casadi import sin, cos, pi
+from casadi import sin, cos, pi, arctan2
 import matplotlib.pyplot as plt
 from simulation_code import simulate
 
@@ -10,7 +10,7 @@ from simulation_code import simulate
 # setting matrix_weights' variables
 Q_x = 100
 Q_y = 100
-Q_theta = 2
+Q_theta = 0
 R1 = 1
 R2 = 0.01
 
@@ -189,7 +189,9 @@ args = {
 
 t0 = 0
 state_init = ca.DM([x_init, y_init, theta_init])        # initial state
-state_target = ca.DM([x_target, y_target, theta_target])  # target state
+state_init0 = ca.DM([0,0,0])        # initial state
+state_real_target = ca.DM([x_target, y_target, theta_target])  # target state
+state_target = state_real_target - state_init  # target state
 
 # xx = DM(state_init)
 t = ca.DM(t0)
@@ -209,13 +211,15 @@ times = np.array([[0]])
 if __name__ == '__main__':
     main_loop = time()  # return time in sec
     #sensor measurements
-    rel_distance = ca.norm_2(state_init - state_target)
+    rel_distance = ca.norm_2(state_init[0:2] - state_target[0:2]) #distance to target
+    #heading to target
+    orientation = arctan2(state_target[0]-state_init[0],state_target[1]-state_init[1])
     print(rel_distance)
     print(state_init)
-    while (ca.norm_2(state_init - state_target) > 1e-1) and (mpc_iter * step_horizon < sim_time):
+    while (ca.norm_2(state_init - state_real_target) > 1e-1) and (mpc_iter * step_horizon < sim_time):
         t1 = time()
         args['p'] = ca.vertcat(
-            state_init,    # current state
+            state_init0,    # current state
             state_target   # target state
         )
         # optimization variable current state
@@ -250,9 +254,9 @@ if __name__ == '__main__':
             t0
         ))
 
-        t0, state_init, u0 = shift_timestep(step_horizon, t0, state_init, u, f)
-
-        # print(X0)
+        t0, state_init, u0 = shift_timestep(step_horizon, t0, state_init0, u, f)
+        state_target = state_real_target - state_init  # target state
+        print(X0)
         X0 = ca.horzcat(
             X0[:, 1:],
             ca.reshape(X0[:, -1], -1, 1)

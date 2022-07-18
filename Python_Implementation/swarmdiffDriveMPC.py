@@ -16,8 +16,7 @@ Q_y = 100
 Q_theta = 2
 R1 = 1
 R2 = 0.01
-R3 = 1
-R4 = 1
+
 
 step_horizon = 0.1  # time between steps in seconds
 N = 10             # number of look ahead steps

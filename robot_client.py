@@ -186,6 +186,93 @@ class Robot:
 
         self.cost_fn = 0  # cost function
         self.g = self.X[:, 0] - self.P[:self.n_states]  # constraints in the equation
+        # runge kutta
+        for k in range(self.N):
+            self.st = self.X[:, k]
+            self.con = self.U[:, k]
+            self.cost_fn = self.cost_fn \
+                + (self.st - self.P[self.n_states:]).T @ self.Q @ (self.st - self.P[self.n_states:]) \
+                + con.T @ self.R @ con
+            st_next = self.X[:, k+1]
+            k1 = self.f(self.st, con)
+            k2 = self.f(self.st + self.step_horizon/2*k1, con)
+            k3 = self.f(self.st + self.step_horizon/2*k2, con)
+            k4 = self.f(self.st + self.step_horizon * k3, con)
+            st_next_RK4 = self.st + (self.step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+            self.g = ca.vertcat(g, st_next - st_next_RK4)
+
+        m = [-self.omega_max/self.v_max, self.omega_max/-self.v_min, -self.omega_min/self.v_max, self.omega_min/-self.v_min]
+
+        for p in range(0,4): #Diff drive constraint in the input
+            for k in range(0,self.N):
+                con = self.U[:,k]; #con=control
+                g = ca.vertcat(g, con[1]-m[p]*con[0])
+
+        self.OPT_variables = ca.vertcat(
+            self.X.reshape((-1, 1)),   # Example: 3x11 ---> 33x1 where 3=states, 11=N+1
+            self.U.reshape((-1, 1))
+        )
+        self.nlp_prob = {
+            'f': self.cost_fn,
+            'x': self.OPT_variables,
+            'g': self.g,
+            'p': self.P
+        }
+
+        self.opts = {
+            'ipopt': {
+                'max_iter': 2000,
+                'print_level': 0,
+                'acceptable_tol': 1e-8,
+                'acceptable_obj_change_tol': 1e-6
+            },
+            'print_time': 0
+        }
+
+        self.solver = ca.nlpsol('solver', 'ipopt', self.nlp_prob, self.opts)
+
+        lbx = ca.DM.zeros((self.n_states*(self.N+1) + self.n_controls*self.N, 1))
+        ubx = ca.DM.zeros((self.n_states*(self.N+1) + self.n_controls*self.N, 1))
+
+        lbx[0: self.n_states*(self.N+1): self.n_states] = self.x_min     # X lower bound
+        lbx[1: self.n_states*(self.N+1): self.n_states] = self.y_min     # Y lower bound
+        lbx[2: self.n_states*(self.N+1): self.n_states] = -ca.inf     # theta lower bound
+
+        ubx[0: self.n_states*(self.N+1): self.n_states] = self.x_max      # X upper bound
+        ubx[1: self.n_states*(self.N+1): self.n_states] = self.y_max      # Y upper bound
+        ubx[2: self.n_states*(self.N+1): self.n_states] = ca.inf      # theta upper bound
+
+        lbx[self.n_states*(self.N+1)::self.n_controls] = self.v_min       # v lower bound for all V
+        lbx[self.n_states*(self.N+1)+1::self.n_controls] = self.omega_min       # v lower bound for all V
+
+        ubx[self.n_states*(self.N+1)::self.n_controls] = self.v_max       # v lower bound for all V
+        ubx[self.n_states*(self.N+1)+1::self.n_controls] = self.omega_max       # v lower bound for all V
+
+
+        lbg = ca.DM.zeros((self.n_states*(self.N+1) + 4*(self.N), 1))  # constraints lower bound
+        ubg = ca.DM.zeros((self.n_states*(self.N+1) + 4*(self.N), 1))  # constraints upper bound
+
+        lbg[self.n_states*(self.N+1):self.n_states*(self.N+1)+2*self.N] = -ca.inf
+        lbg[self.n_states*(self.N+1)+2*self.N:] = self.omega_min
+
+        ubg[self.n_states*(self.N+1):self.n_states*(self.N+1)+2*self.N] = self.omega_max
+        ubg[self.n_states*(self.N+1)+2*self.N:] = ca.inf
+
+        self.args = {
+            'lbg': lbg,  # constraints lower bound
+            'ubg': ubg,  # constraints upper bound
+            'lbx': lbx,
+            'ubx': ubx
+        }
+
+        t0 = 0
+        self.state_init = ca.DM([0,0,0])        # initial state
+        self.state_target = ca.DM([self.x_target, self.y_target, self.theta_target])  # target state
+
+        self.t = ca.DM(t0)
+
+        self.u0 = ca.DM.zeros((self.n_controls, self.N))  # initial control
+        self.X0 = ca.repmat(self.state_init, 1, self.N+1)         # initial state full
 
         # Pi-puck IR is more sensitive than Mona, so use higher threshold for obstacle detection
         if robot_id < 31:
@@ -194,7 +281,6 @@ class Robot:
         else:
             # Mona
             self.ir_threshold = 80
-
 
 # Connect to websocket server of tracking server
 async def connect_to_server():
@@ -410,7 +496,28 @@ async def send_commands(robot):
                 robot.turn_time = time.time()
                 robot.state = RobotState.FORWARDS
 
-        MPC(robot.state)
+        #MPC(robot.state)
+        left, right = await my_MPC(robot)
+        print("")
+                
+        print("------")
+        near_robots = list(robot.neighbours.keys())
+        near_tasks = list(robot.tasks.keys())
+        
+        if near_robots:
+            for i in near_robots:
+                print(i)
+                rg = robot.neighbours[i]['range']
+                br = robot.neighbours[i]['bearing']
+                forcex = rg*cos(br)
+                forcey = rg*sin(br)
+                left = left + forcex
+                right = right + forcex 
+                
+        if near_tasks:
+            print(near_tasks[0])
+        print("------")
+
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
         message["set_motor_speeds"]["right"] = right
@@ -427,7 +534,17 @@ async def send_commands(robot):
     except Exception as e:
         print(f"{type(e).__name__}: {e}")
 
+async def my_MPC(robot):
+    left = 0
+    right = 0
 
+    near_tasks = list(robot.tasks.keys())
+    if near_tasks:
+            print(near_tasks[0])
+    #robot.args['p'] = ca.vertcat(
+    #            robot.state_init,    # current state (0)
+    #            state_target   # target task position
+    #        )
 # Menu state for teleop control input
 class MenuState(Enum):
     START = 1

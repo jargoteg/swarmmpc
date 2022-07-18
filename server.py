@@ -52,7 +52,7 @@ class Robot:
         self.id = tag.id
         self.position = position
         self.orientation = tag.angle
-        self.sensor_range = 0.3 # 30cm sensing radius
+        self.sensor_range = 3.3 # 30cm sensing radius
         self.neighbours = {}
         self.tasks = {}
 
@@ -214,12 +214,12 @@ class Tracker(threading.Thread):
                         cv2.putText(image, text, position, font, font_scale, white, thickness, cv2.LINE_AA)
 
                     # Create any new tasks, if necessary
-                    while len(self.tasks) < 3:
+                    while len(self.tasks) < 2: #mod: 1 task
                         id = self.task_counter
                         placed = False
                         while not placed:
                             overlaps = False
-                            workers = random.randint(1, 5)
+                            workers = random.randint(1, 1) #mod: always 1
                             radius = math.sqrt(workers) * 0.1
                             min_x_metres = self.min_x / self.scale_factor
                             max_x_metres = self.max_x / self.scale_factor
@@ -237,7 +237,7 @@ class Tracker(threading.Thread):
                             if not overlaps:
                                 placed = True
 
-                        time_limit = 20 * workers # 20 seconds per robot
+                        time_limit = 60 * workers #20 seconds per robot #mod: extra time 60*1
                         self.tasks[id] = Task(id, workers, position, radius, time_limit)
                         self.task_counter = self.task_counter + 1
 
