@@ -24,8 +24,8 @@ x_init = 0
 y_init = 0
 theta_init = 0
 
-x_target = 0
-y_target = 10
+x_target = 10
+y_target = 1
 theta_target = pi
 
 v_max = 0.6
@@ -42,8 +42,8 @@ y_min = -10
 
 def shift_timestep(step_horizon, t0, state_init, u, f):
     f_value = f(state_init, u[:, 0])
-    next_state = ca.DM.full(state_init + (step_horizon * f_value))
-
+    next_state = ca.DM.full(state_init + (step_horizon * f_value)) 
+    print(next_state)
     t0 = t0 + step_horizon
     u0 = ca.horzcat(
         u[:, 1:],
@@ -188,21 +188,21 @@ args = {
 }
 
 t0 = 0
-state_init = ca.DM([x_init, y_init, theta_init])        # initial state
-state_init0 = ca.DM([0,0,0])        # initial state
-state_real_target = ca.DM([x_target, y_target, theta_target])  # target state
-state_target = state_real_target - state_init  # target state
+real_current_state = ca.DM([x_init, y_init, theta_init])        # real current state
+real_target_state = ca.DM([x_target, y_target, theta_target])  # real target state
 
-# xx = DM(state_init)
+robot_current_state = ca.DM([0,0,theta_init])        # current state relative to robot (only angle changes)
+relative_target_state = real_target_state - real_current_state  # target state relative to robot
+
 t = ca.DM(t0)
 
 u0 = ca.DM.zeros((n_controls, N))  # initial control
-X0 = ca.repmat(state_init, 1, N+1)         # initial state full
+X0 = ca.repmat(robot_current_state, 1, N+1)         # initial state full
 
 
 mpc_iter = 0
-cat_states = DM2Arr(X0)
-cat_controls = DM2Arr(u0[:, 0])
+cat_states = DM2Arr(X0) #saves states for plotting
+cat_controls = DM2Arr(u0[:, 0]) #saves controls for plotting
 times = np.array([[0]])
 
 
@@ -210,24 +210,26 @@ times = np.array([[0]])
 
 if __name__ == '__main__':
     main_loop = time()  # return time in sec
+
     #sensor measurements
-    rel_distance = ca.norm_2(state_init[0:2] - state_target[0:2]) #distance to target
-    #heading to target
-    orientation = arctan2(state_target[0]-state_init[0],state_target[1]-state_init[1])
-    print(rel_distance)
-    print(state_init)
-    while (ca.norm_2(state_init - state_real_target) > 1e-1) and (mpc_iter * step_horizon < sim_time):
+    rel_distance = ca.norm_2(real_current_state[0:2] - real_target_state[0:2]) #distance to target
+    bearing = arctan2(real_target_state[0]-real_current_state[0],real_target_state[1]-real_current_state[1]) #heading to target
+    #######
+
+    relative_target_state = ca.DM([rel_distance*cos(bearing),rel_distance*sin(bearing),0])  #target x and y measured states
+
+    while (rel_distance > 1e-1) and (mpc_iter * step_horizon < sim_time):
         t1 = time()
         args['p'] = ca.vertcat(
-            state_init0,    # current state
-            state_target   # target state
+            robot_current_state,    # current state
+            relative_target_state   # target state
         )
-        # optimization variable current state
+        # optimization variable current state (for warm start probably)
         args['x0'] = ca.vertcat(
             ca.reshape(X0, n_states*(N+1), 1),
             ca.reshape(u0, n_controls*N, 1)
         )
-
+        #print(args['p'])
         sol = solver(
             x0=args['x0'],
             lbx=args['lbx'],
@@ -235,11 +237,12 @@ if __name__ == '__main__':
             lbg=args['lbg'],
             ubg=args['ubg'],
             p=args['p']
-        )
+        )                           #solve optimal control problem
 
-        u = ca.reshape(sol['x'][n_states * (N + 1):], n_controls, N)
-        X0 = ca.reshape(sol['x'][: n_states * (N+1)], n_states, N+1)
+        u = ca.reshape(sol['x'][n_states * (N + 1):], n_controls, N) #optimal controls
+        X0 = ca.reshape(sol['x'][: n_states * (N+1)], n_states, N+1) #optimal trajectory
 
+    ################PLOT#####################
         cat_states = np.dstack((
             cat_states,
             DM2Arr(X0)
@@ -252,11 +255,10 @@ if __name__ == '__main__':
         t = np.vstack((
             t,
             t0
-        ))
-
-        t0, state_init, u0 = shift_timestep(step_horizon, t0, state_init0, u, f)
-        state_target = state_real_target - state_init  # target state
-        print(X0)
+        )) #time for plotting only
+    ######################################
+        t0, real_current_state, u0 = shift_timestep(step_horizon, t0, real_current_state, u, f)
+        #print(u0)
         X0 = ca.horzcat(
             X0[:, 1:],
             ca.reshape(X0[:, -1], -1, 1)
@@ -272,9 +274,14 @@ if __name__ == '__main__':
         ))
 
         mpc_iter = mpc_iter + 1
+        #sensor measurements
+        rel_distance = ca.norm_2(real_current_state[0:2] - real_target_state[0:2]) #distance to target
+        bearing = arctan2(real_target_state[0]-real_current_state[0],real_target_state[1]-real_current_state[1]) #heading to target
+        #######
+        relative_target_state = ca.DM([rel_distance*cos(bearing),rel_distance*sin(bearing),0])  #target x and y measured states
 
     main_loop_time = time()
-    ss_error = ca.norm_2(state_init - state_target)
+    ss_error = ca.norm_2(real_current_state - real_target_state)
 
     print('\n\n')
     print('Total time: ', main_loop_time - main_loop)

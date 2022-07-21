@@ -15,7 +15,7 @@ R3 = 1
 R4 = 1
 
 step_horizon = 0.1  # time between steps in seconds
-N = 10              # number of look ahead steps
+N = 40              # number of look ahead steps
 rob_diam = 0.3      # diameter of the robot
 sim_time = 200      # simulation time
 
@@ -276,4 +276,4 @@ if __name__ == '__main__':
 
     # simulate
     simulate(cat_states, cat_controls, times, step_horizon, N,
-             np.array([x_init, y_init, theta_init, x_target, y_target, theta_target]), save=False)
+             np.array([x_init, y_init, theta_init, x_target, y_target, theta_target]), save=True)
