@@ -214,7 +214,7 @@ class Tracker(threading.Thread):
                         cv2.putText(image, text, position, font, font_scale, white, thickness, cv2.LINE_AA)
 
                     # Create any new tasks, if necessary
-                    while len(self.tasks) < 2: #mod: 1 task
+                    while len(self.tasks) < 1: #mod: 1 task
                         id = self.task_counter
                         placed = False
                         while not placed:
@@ -349,7 +349,7 @@ async def handler(websocket):
 
             for id, robot in tracker.robots.items():
                 reply[id] = {}
-                reply[id]["position"] = [robot.tag.centre.x, robot.tag.centre.y]#mod: send current position
+                reply[id]["position"] = [robot.position.x,robot.position.y] #mod: send current position
                 reply[id]["orientation"] = robot.orientation
                 reply[id]["neighbours"] = {}
                 reply[id]["tasks"] = {}
