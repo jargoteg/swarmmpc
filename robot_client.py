@@ -14,6 +14,7 @@ import random
 import inspect
 import casadi as ca
 from casadi import sin, cos, pi
+import numpy as np
 import colorama
 from colorama import Fore
 
@@ -124,7 +125,7 @@ class Robot:
         self.R2 = 0.01
 
         self.step_horizon = 0.1  # time between steps in seconds
-        self.N = 10              # number of look ahead steps
+        self.N = 1              # number of look ahead steps
 
         # specs
         self.x_init = 1
@@ -508,10 +509,12 @@ async def send_commands(robot):
                 robot.state = RobotState.FORWARDS
 
         #MPC(robot.state)
-        #left, right = await my_MPC(robot)
+        left, right = await my_MPC(robot)
         
                 
         print("------")
+        print("posx:",robot.position[0])
+        print("posy:",robot.position[1])
         #near_robots = list(robot.neighbours.keys())
         near_tasks = list(robot.tasks.keys())
         print(near_tasks)
@@ -528,7 +531,8 @@ async def send_commands(robot):
         #if near_tasks:
             #print("tasks",near_tasks[0])
             #print("------")
-
+        print("Motor values: L:",left)
+        print("R:",right)
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
         message["set_motor_speeds"]["right"] = right
@@ -545,6 +549,9 @@ async def send_commands(robot):
     except Exception as e:
         print(f"{type(e).__name__}: {e}")
 
+def DM2Arr(dm):
+    return np.array(dm.full())
+
 async def my_MPC(robot):
     left = 0
     right = 0
@@ -558,8 +565,10 @@ async def my_MPC(robot):
                 print("range: ",rel_distance)
                 print("bearing: ",bearing)
     
-    relative_target_state = ca.DM([rel_distance*cos(bearing),rel_distance*sin(bearing),0])  #target x and y measured states
-    robot_current_state = ca.DM([0,0,robot.orientation]) 
+    relative_target_state = ca.DM([robot.position[0]+rel_distance*cos(bearing),robot.position[1]+rel_distance*sin(bearing),0])  #target x and y measured states
+    robot_current_state = ca.DM([robot.position[0],robot.position[1],robot.orientation]) 
+    print("robotpos",robot_current_state)
+    print("targetpos",relative_target_state)
     robot.args['p'] = ca.vertcat(
         robot_current_state,    # current state
         relative_target_state   # target state
@@ -580,7 +589,9 @@ async def my_MPC(robot):
     )                           #solve optimal control problem
 
     u = ca.reshape(sol['x'][robot.n_states * (robot.N + 1):], robot.n_controls, robot.N) #optimal controls
-    X0 = ca.reshape(sol['x'][: robot.n_states * (robot.N+1)], robot.n_states, robot.N+1) #optimal trajectory
+    left = DM2Arr(u[0, 0])
+    right = DM2Arr(u[0, 0])
+    return float(left),float(right)
 
 # Menu state for teleop control input
 class MenuState(Enum):
