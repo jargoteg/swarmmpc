@@ -17,7 +17,7 @@ from casadi import sin, cos, pi
 import colorama
 from colorama import Fore
 
-import arenaMPC
+
 
 colorama.init(autoreset=True)
 
@@ -99,6 +99,7 @@ class Robot:
         self.id = robot_id
         self.connection = None
 
+        self.position = []
         self.orientation = 0
         self.neighbours = {}
         self.tasks = {}
@@ -124,6 +125,14 @@ class Robot:
 
         self.step_horizon = 0.1  # time between steps in seconds
         self.N = 10              # number of look ahead steps
+
+        # specs
+        self.x_init = 1
+        self.y_init = 0
+        self.theta_init = 0
+        self.x_target = 7
+        self.y_target = 10
+        self.theta_target = pi
 
         #Robot specific parameters
         self.v_max = 100
@@ -192,21 +201,21 @@ class Robot:
             self.con = self.U[:, k]
             self.cost_fn = self.cost_fn \
                 + (self.st - self.P[self.n_states:]).T @ self.Q @ (self.st - self.P[self.n_states:]) \
-                + con.T @ self.R @ con
+                + self.con.T @ self.R @ self.con
             st_next = self.X[:, k+1]
-            k1 = self.f(self.st, con)
-            k2 = self.f(self.st + self.step_horizon/2*k1, con)
-            k3 = self.f(self.st + self.step_horizon/2*k2, con)
-            k4 = self.f(self.st + self.step_horizon * k3, con)
+            k1 = self.f(self.st, self.con)
+            k2 = self.f(self.st + self.step_horizon/2*k1, self.con)
+            k3 = self.f(self.st + self.step_horizon/2*k2, self.con)
+            k4 = self.f(self.st + self.step_horizon * k3, self.con)
             st_next_RK4 = self.st + (self.step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
-            self.g = ca.vertcat(g, st_next - st_next_RK4)
+            self.g = ca.vertcat(self.g, st_next - st_next_RK4)
 
         m = [-self.omega_max/self.v_max, self.omega_max/-self.v_min, -self.omega_min/self.v_max, self.omega_min/-self.v_min]
 
         for p in range(0,4): #Diff drive constraint in the input
             for k in range(0,self.N):
-                con = self.U[:,k]; #con=control
-                g = ca.vertcat(g, con[1]-m[p]*con[0])
+                self.con = self.U[:,k]; #con=control
+                self.g = ca.vertcat(self.g, self.con[1]-m[p]*self.con[0])
 
         self.OPT_variables = ca.vertcat(
             self.X.reshape((-1, 1)),   # Example: 3x11 ---> 33x1 where 3=states, 11=N+1
@@ -386,11 +395,13 @@ async def get_server_data():
 
         # Receive robot virtual sensor data from the server
         for id, robot in filtered_reply.items():
+            active_robots[id].position = robot["position"]
             active_robots[id].orientation = robot["orientation"]
             # Filter out any neighbours that aren't our active robots
             active_robots[id].neighbours = {k: v for (k, v) in robot["neighbours"].items() if int(k) in active_robots.keys()}
             active_robots[id].tasks = robot["tasks"]
             print(f"Robot {id}")
+            print(f"Position = {active_robots[id].position}")
             print(f"Orientation = {active_robots[id].orientation}")
             print(f"Neighbours = {active_robots[id].neighbours}")
             print(f"Tasks = {active_robots[id].tasks}")
@@ -497,26 +508,26 @@ async def send_commands(robot):
                 robot.state = RobotState.FORWARDS
 
         #MPC(robot.state)
-        left, right = await my_MPC(robot)
-        print("")
-                
-        print("------")
-        near_robots = list(robot.neighbours.keys())
-        near_tasks = list(robot.tasks.keys())
+        #left, right = await my_MPC(robot)
         
-        if near_robots:
-            for i in near_robots:
-                print(i)
-                rg = robot.neighbours[i]['range']
-                br = robot.neighbours[i]['bearing']
-                forcex = rg*cos(br)
-                forcey = rg*sin(br)
-                left = left + forcex
-                right = right + forcex 
                 
-        if near_tasks:
-            print(near_tasks[0])
         print("------")
+        #near_robots = list(robot.neighbours.keys())
+        near_tasks = list(robot.tasks.keys())
+        print(near_tasks)
+        print("")
+        
+        if near_tasks:
+            for i in near_tasks:
+                print(i)
+                rg = robot.tasks[i]['range']
+                br = robot.tasks[i]['bearing']
+                print("range: ",rg)
+                print("bearing: ",br)
+             
+        #if near_tasks:
+            #print("tasks",near_tasks[0])
+            #print("------")
 
         message["set_motor_speeds"] = {}
         message["set_motor_speeds"]["left"] = left
@@ -540,11 +551,37 @@ async def my_MPC(robot):
 
     near_tasks = list(robot.tasks.keys())
     if near_tasks:
-            print(near_tasks[0])
-    #robot.args['p'] = ca.vertcat(
-    #            robot.state_init,    # current state (0)
-    #            state_target   # target task position
-    #        )
+            for i in near_tasks:
+                print(i)
+                rel_distance = robot.tasks[i]['range']
+                bearing = robot.tasks[i]['bearing']
+                print("range: ",rel_distance)
+                print("bearing: ",bearing)
+    
+    relative_target_state = ca.DM([rel_distance*cos(bearing),rel_distance*sin(bearing),0])  #target x and y measured states
+    robot_current_state = ca.DM([0,0,robot.orientation]) 
+    robot.args['p'] = ca.vertcat(
+        robot_current_state,    # current state
+        relative_target_state   # target state
+    )
+    # optimization variable current state (for warm start probably)
+    robot.args['x0'] = ca.vertcat(
+        ca.reshape(robot.X0, robot.n_states*(robot.N+1), 1),
+        ca.reshape(robot.u0, robot.n_controls*robot.N, 1)
+    )
+    #print(args['p'])
+    sol = robot.solver(
+        x0=robot.args['x0'],
+        lbx=robot.args['lbx'],
+        ubx=robot.args['ubx'],
+        lbg=robot.args['lbg'],
+        ubg=robot.args['ubg'],
+        p=robot.args['p']
+    )                           #solve optimal control problem
+
+    u = ca.reshape(sol['x'][robot.n_states * (robot.N + 1):], robot.n_controls, robot.N) #optimal controls
+    X0 = ca.reshape(sol['x'][: robot.n_states * (robot.N+1)], robot.n_states, robot.N+1) #optimal trajectory
+
 # Menu state for teleop control input
 class MenuState(Enum):
     START = 1
@@ -644,7 +681,7 @@ if __name__ == "__main__":
 
     # Specify robot IDs to work with here. For example for robots 11-15 use:
     #  robot_ids = range(11, 16)
-    robot_ids = range(46, 47)
+    robot_ids = range(43, 44)
 
     if len(robot_ids) == 0:
         raise Exception(f"Enter range of robot IDs to control on line {inspect.currentframe().f_lineno - 3}, "

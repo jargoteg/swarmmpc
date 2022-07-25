@@ -349,6 +349,7 @@ async def handler(websocket):
 
             for id, robot in tracker.robots.items():
                 reply[id] = {}
+                reply[id]["position"] = [robot.tag.centre.x, robot.tag.centre.y]#mod: send current position
                 reply[id]["orientation"] = robot.orientation
                 reply[id]["neighbours"] = {}
                 reply[id]["tasks"] = {}
