@@ -27,7 +27,7 @@ colorama.init(autoreset=True)
 #  or specify a custom server IP address as a string.
 # All ports should remain at 80.
 ##
-server_address = "192.168.0.170"
+server_address = server_sheffield
 server_port = 80
 robot_port = 80
 ##

@@ -17,15 +17,15 @@ R2 = 0.01
 step_horizon = 0.1  # time between steps in seconds
 N = 10              # number of look ahead steps
 rob_diam = 0.3      # diameter of the robot
-sim_time = 200      # simulation time
+sim_time = 100      # simulation time
 
 # specs
 x_init = 0
 y_init = 0
 theta_init = 0
 
-x_target = 10
-y_target = 1
+x_target = 5
+y_target = 3
 theta_target = pi
 
 v_max = 0.6
@@ -43,7 +43,6 @@ y_min = -10
 def shift_timestep(step_horizon, t0, state_init, u, f):
     f_value = f(state_init, u[:, 0])
     next_state = ca.DM.full(state_init + (step_horizon * f_value)) 
-    print(next_state)
     t0 = t0 + step_horizon
     u0 = ca.horzcat(
         u[:, 1:],
@@ -202,6 +201,7 @@ X0 = ca.repmat(robot_current_state, 1, N+1)         # initial state full
 
 mpc_iter = 0
 cat_states = DM2Arr(X0) #saves states for plotting
+
 cat_controls = DM2Arr(u0[:, 0]) #saves controls for plotting
 times = np.array([[0]])
 
@@ -215,9 +215,8 @@ if __name__ == '__main__':
     rel_distance = ca.norm_2(real_current_state[0:2] - real_target_state[0:2]) #distance to target
     bearing = arctan2(real_target_state[0]-real_current_state[0],real_target_state[1]-real_current_state[1]) #heading to target
     #######
-
     relative_target_state = ca.DM([rel_distance*cos(bearing),rel_distance*sin(bearing),0])  #target x and y measured states
-
+    cat_dist = DM2Arr(relative_target_state) #saves states for plotting
     while (rel_distance > 1e-1) and (mpc_iter * step_horizon < sim_time):
         t1 = time()
         args['p'] = ca.vertcat(
@@ -246,6 +245,11 @@ if __name__ == '__main__':
         cat_states = np.dstack((
             cat_states,
             DM2Arr(X0)
+        ))
+
+        cat_dist = np.dstack((
+            cat_dist,
+            DM2Arr(relative_target_state)
         ))
 
         cat_controls = np.vstack((
@@ -287,7 +291,11 @@ if __name__ == '__main__':
     print('Total time: ', main_loop_time - main_loop)
     print('avg iteration time: ', np.array(times).mean() * 1000, 'ms')
     print('final error: ', ss_error)
-
+    print('cat0',cat_dist[0])
+    print('cat1',cat_dist[1])
+    plt.plot(cat_dist[0,0,:],cat_dist[1,0,:],linewidth=2.0)
+    plt.axis([0,10, -14, 8])
+    plt.show()
     # simulate
-    simulate(cat_states, cat_controls, times, step_horizon, N,
-             np.array([x_init, y_init, theta_init, x_target, y_target, theta_target]), save=False)
+    #simulate(cat_states, cat_controls, times, step_horizon, N,
+             #np.array([x_init, y_init, theta_init, x_target, y_target, theta_target]), save=False)

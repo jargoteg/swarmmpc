@@ -50,8 +50,8 @@ def simulate(cat_states, cat_controls, t, step_horizon, N, reference, save=False
         current_state.set_xy(create_triangle([x, y, th], update=True))
 
         # update target_state
-        # xy = target_state.get_xy()
-        # target_state.set_xy(xy)            
+        xy = target_state.get_xy()
+        target_state.set_xy(xy)            
 
         return path, horizon, current_state, target_state,
 
