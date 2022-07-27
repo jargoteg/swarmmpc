@@ -3,6 +3,7 @@ import casadi as ca
 import numpy as np
 from casadi import sin, cos, pi
 import matplotlib.pyplot as plt
+#from robot_client import DM2Arr
 from simulation_code import simulate
 
 #Main MPC class where all variables are defined. Intended to work for multi-robot case
@@ -12,6 +13,67 @@ MAX_ROTATION = pi/4
 
 ARENA_SIZE_X = 100
 ARENA_SIZE_Y = 100
+
+class Constraints: #Handles the constraints for the MPC controller
+    def __init__(self):
+        self.lbx = ca.DM([])
+        self.ubx = ca.DM([])
+        self.lbg = ca.DM([])
+        self.ubg = ca.DM([])
+        self.g = ca.DM([])
+
+    def add_lbx_and_ubx(self,robot):
+        self.lbx = ca.DM.zeros((robot.n_states*(robot.N+1) + robot.n_controls*robot.N, 1))
+        self.ubx = ca.DM.zeros((robot.n_states*(robot.N+1) + robot.n_controls*robot.N, 1))
+
+        self.lbx[0: robot.n_states*(robot.N+1): robot.n_states] = robot.x_min     # X lower bound
+        self.lbx[1: robot.n_states*(robot.N+1): robot.n_states] = robot.y_min     # Y lower bound
+        self.lbx[2: robot.n_states*(robot.N+1): robot.n_states] = -ca.inf     # theta lower bound
+
+        self.ubx[0: robot.n_states*(robot.N+1): robot.n_states] = robot.x_max      # X upper bound
+        self.ubx[1: robot.n_states*(robot.N+1): robot.n_states] = robot.y_max      # Y upper bound
+        self.ubx[2: robot.n_states*(robot.N+1): robot.n_states] = ca.inf      # theta upper bound
+
+        self.lbx[robot.n_states*(robot.N+1)::robot.n_controls] = robot.v_min       # v lower bound for all V
+        self.lbx[robot.n_states*(robot.N+1)+1::robot.n_controls] = robot.omega_min       # v lower bound for all V
+
+        self.ubx[robot.n_states*(robot.N+1)::robot.n_controls] = robot.v_max       # v lower bound for all V
+        self.ubx[robot.n_states*(robot.N+1)+1::robot.n_controls] = robot.omega_max       # v lower bound for all V
+    def add_g_equality_cons(self,robot): #equality constraints between next state and predicted next state
+        self.g = robot.X[:, 0] - robot.P[:robot.n_states]  # constraints in the equation
+        # runge kutta
+        for k in range(robot.N):
+            robot.st = robot.X[:, k]
+            robot.con = robot.U[:, k]
+            robot.cost_fn = robot.cost_fn \
+                + (robot.st - robot.P[robot.n_states:]).T @ robot.Q @ (robot.st - robot.P[robot.n_states:]) \
+                + robot.con.T @ robot.R @ robot.con
+            st_next = robot.X[:, k+1]
+            k1 = robot.f(robot.st, robot.con)
+            k2 = robot.f(robot.st + robot.step_horizon/2*k1, robot.con)
+            k3 = robot.f(robot.st + robot.step_horizon/2*k2, robot.con)
+            k4 = robot.f(robot.st + robot.step_horizon * k3, robot.con)
+            st_next_RK4 = robot.st + (robot.step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+            self.g = ca.vertcat(self.g, st_next - st_next_RK4)
+            #current_length = self.g.size()[0]
+            this_lbg = ca.DM.zeros((robot.n_states*(robot.N+1),1))
+            print(this_lbg)
+            this_ubg = ca.DM.zeros((robot.n_states*(robot.N+1),1))
+            self.lbg = appendDM(self.lbg,this_lbg)
+            self.ubg = appendDM(self.ubg,this_ubg)
+
+    def add_g_dynamics(self,robot):
+        m = [-robot.omega_max/robot.v_max, robot.omega_max/-robot.v_min, -robot.omega_min/robot.v_max, robot.omega_min/-robot.v_min]
+
+        for p in range(0,4): #Diff drive constraint in the input
+            for k in range(0,robot.N):
+                robot.con = robot.U[:,k]; #con=control
+                self.g = ca.vertcat(self.g, robot.con[1]-m[p]*robot.con[0])
+        self.lbg = appendDM(self.lbg,ca.DM.ones((2*robot.N),1)*(-ca.inf))
+        self.lbg = appendDM(self.lbg,ca.DM.ones((2*robot.N),1)*(robot.omega_min))
+        self.ubg = appendDM(self.ubg,ca.DM.ones((2*robot.N),1)*(robot.omega_max))
+        self.ubg = appendDM(self.ubg,ca.DM.ones((2*robot.N),1)*(ca.inf))
+
 class MPC:
 
     #MPC weights
@@ -21,7 +83,7 @@ class MPC:
     R1 = 1
     R2 = 0.01
     
-    N = 40              # number of look ahead steps
+    N = 1               # number of look ahead steps
     rob_diam = 0.3      # diameter of the robot
     sim_time = 200      # simulation time
     step_horizon = 0.1  # time between steps in seconds
@@ -92,28 +154,10 @@ class MPC:
         self.f = ca.Function('f', [self.states, self.controls], [self.RHS])
         
         self.cost_fn = 0  # cost function
-        self.g = self.X[:, 0] - self.P[:self.n_states]  # constraints in the equation
-        # runge kutta
-        for k in range(self.N):
-            self.st = self.X[:, k]
-            self.con = self.U[:, k]
-            self.cost_fn = self.cost_fn \
-                + (self.st - self.P[self.n_states:]).T @ self.Q @ (self.st - self.P[self.n_states:]) \
-                + self.con.T @ self.R @ self.con
-            st_next = self.X[:, k+1]
-            k1 = self.f(self.st, self.con)
-            k2 = self.f(self.st + self.step_horizon/2*k1, self.con)
-            k3 = self.f(self.st + self.step_horizon/2*k2, self.con)
-            k4 = self.f(self.st + self.step_horizon * k3, self.con)
-            st_next_RK4 = self.st + (self.step_horizon / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
-            self.g = ca.vertcat(self.g, st_next - st_next_RK4)
+        constraint = Constraints()
+        constraint.add_g_equality_cons(self)
+        constraint.add_g_dynamics(self)
 
-        m = [-self.omega_max/self.v_max, self.omega_max/-self.v_min, -self.omega_min/self.v_max, self.omega_min/-self.v_min]
-
-        for p in range(0,4): #Diff drive constraint in the input
-            for k in range(0,self.N):
-                self.con = self.U[:,k]; #con=control
-                self.g = ca.vertcat(self.g, self.con[1]-m[p]*self.con[0])
 
         self.OPT_variables = ca.vertcat(
             self.X.reshape((-1, 1)),   # Example: 3x11 ---> 33x1 where 3=states, 11=N+1
@@ -122,7 +166,7 @@ class MPC:
         self.nlp_prob = {
             'f': self.cost_fn,
             'x': self.OPT_variables,
-            'g': self.g,
+            'g': constraint.g,
             'p': self.P
         }
 
@@ -138,37 +182,16 @@ class MPC:
 
         self.solver = ca.nlpsol('solver', 'ipopt', self.nlp_prob, self.opts)
 
-        lbx = ca.DM.zeros((self.n_states*(self.N+1) + self.n_controls*self.N, 1))
-        ubx = ca.DM.zeros((self.n_states*(self.N+1) + self.n_controls*self.N, 1))
-
-        lbx[0: self.n_states*(self.N+1): self.n_states] = self.x_min     # X lower bound
-        lbx[1: self.n_states*(self.N+1): self.n_states] = self.y_min     # Y lower bound
-        lbx[2: self.n_states*(self.N+1): self.n_states] = -ca.inf     # theta lower bound
-
-        ubx[0: self.n_states*(self.N+1): self.n_states] = self.x_max      # X upper bound
-        ubx[1: self.n_states*(self.N+1): self.n_states] = self.y_max      # Y upper bound
-        ubx[2: self.n_states*(self.N+1): self.n_states] = ca.inf      # theta upper bound
-
-        lbx[self.n_states*(self.N+1)::self.n_controls] = self.v_min       # v lower bound for all V
-        lbx[self.n_states*(self.N+1)+1::self.n_controls] = self.omega_min       # v lower bound for all V
-
-        ubx[self.n_states*(self.N+1)::self.n_controls] = self.v_max       # v lower bound for all V
-        ubx[self.n_states*(self.N+1)+1::self.n_controls] = self.omega_max       # v lower bound for all V
-
-        lbg = ca.DM.zeros((self.n_states*(self.N+1) + 4*(self.N), 1))  # constraints lower bound
-        ubg = ca.DM.zeros((self.n_states*(self.N+1) + 4*(self.N), 1))  # constraints upper bound
-
-        lbg[self.n_states*(self.N+1):self.n_states*(self.N+1)+2*self.N] = -ca.inf
-        lbg[self.n_states*(self.N+1)+2*self.N:] = self.omega_min
-
-        ubg[self.n_states*(self.N+1):self.n_states*(self.N+1)+2*self.N] = self.omega_max
-        ubg[self.n_states*(self.N+1)+2*self.N:] = ca.inf
+        
+        constraint.add_lbx_and_ubx(self)
+        constraint.add_g_equality_cons(self)
+        constraint.add_g_dynamics(self)
 
         self.args = {
-            'lbg': lbg,  # constraints lower bound
-            'ubg': ubg,  # constraints upper bound
-            'lbx': lbx,
-            'ubx': ubx
+            'lbg': constraint.lbg,  # constraints lower bound
+            'ubg': constraint.ubg,  # constraints upper bound
+            'lbx': constraint.lbx,
+            'ubx': constraint.ubx
         }
 
     def simulation(self):
@@ -223,7 +246,14 @@ class MPC:
 
 def DM2Arr(dm):
     return np.array(dm.full())
- 
+
+def Arr2DM(arr):
+    return ca.DM(arr)
+
+def appendDM(dm,ap):
+    arr = DM2Arr(dm)
+    arr = np.append(arr,ap)
+    return Arr2DM(arr)
 ###############################################################################
 
 if __name__ == '__main__':
